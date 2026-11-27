@@ -229,7 +229,9 @@
       if (p.media && p.mediaKind === "image") {
         const ir = rid(), img = nid(), car = nid();
         res[ir] = { type: "image", data: { src: p.media, provider: "uri" } };
-        nodes[img] = { type: "image", data: { image: ir }, config: { placement: { type: "fit", fit: { color: "backgroundColor" } } } };
+        if (p.width && p.height) { res[ir].data.width = p.width; res[ir].data.height = p.height; }
+        // placement.fill is required: the StoryMaps editor refuses to open a draft without it
+        nodes[img] = { type: "image", data: { image: ir }, config: { placement: { type: "fit", fill: { x: 0.5, y: 0.5 }, fit: { color: "backgroundColor" } } } };
         nodes[car] = { type: "carousel", children: [img] };
         place.media = car;
       }
@@ -291,7 +293,22 @@
     return id;
   }
 
+  function imageSize(url) {
+    return new Promise((resolve) => {
+      if (typeof Image === "undefined") return resolve(null);
+      const im = new Image();
+      const timer = setTimeout(() => resolve(null), 8000);
+      im.onload = () => { clearTimeout(timer); resolve(im.naturalWidth ? { width: im.naturalWidth, height: im.naturalHeight } : null); };
+      im.onerror = () => { clearTimeout(timer); resolve(null); };
+      im.src = url;
+    });
+  }
+
   async function migrateMapTour(session, tour, log) {
+    log("בודק גדלי תמונות...");
+    await Promise.all(tour.places.map(async (p) => {
+      if (p.media && p.mediaKind === "image") { const sz = await imageSize(p.media); if (sz) Object.assign(p, sz); }
+    }));
     log("יוצר מפת בסיס...");
     const wmId = await createBasemapWebmap(session, tour);
     log("מפת בסיס: " + wmId);

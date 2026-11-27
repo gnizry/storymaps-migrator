@@ -281,7 +281,7 @@ def add_tour_to_story(props, tour, basemap_webmap_id, intro_paragraphs=None):
             nodes[img] = {
                 "type": "image",
                 "data": {"image": img_res},
-                "config": {"placement": {"type": "fit", "fit": {"color": "backgroundColor"}}},
+                "config": {"placement": {"type": "fit", "fill": {"x": 0.5, "y": 0.5}, "fit": {"color": "backgroundColor"}}},
             }
             car = nid()
             nodes[car] = {"type": "carousel", "children": [img]}
