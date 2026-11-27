@@ -104,9 +104,14 @@
   function cleanMedia(u) {
     if (!u) return null;
     u = String(u).trim();
-    const kind = u.includes("#isVideo") ? "video" : "image";
-    u = u.replace(/#is(Image|Video)$/, "").replace(/^http:\/\//, "https://");
-    return { url: u, kind };
+    if (!u) return null;
+    const flagged = u.includes("#isVideo");
+    u = u.replace(/#is(Image|Video)$/, "").replace(/^\/\//, "https://").replace(/^http:\/\//, "https://");
+    const yt = u.match(/(?:youtube\.com\/(?:embed\/|watch\?v=)|youtu\.be\/)([\w-]{6,})/i);
+    if (yt) return { url: "https://www.youtube.com/embed/" + yt[1], kind: "video" };
+    const vm = u.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+    if (vm) return { url: "https://player.vimeo.com/video/" + vm[1], kind: "video" };
+    return { url: u, kind: flagged || /\.(mp4|webm|mov)(\?|$)/i.test(u) ? "video" : "image" };
   }
   function captionToParagraphs(c) {
     if (!c) return [];
@@ -170,7 +175,6 @@
       }
       const name = stripTags(pick(a, "name"));
       const media = cleanMedia(pick(a, "pic"));
-      if (media && media.kind === "video") warnings.push(`"${name}": וידאו - נוסף כקישור, יש להטמיע ידנית`);
       if (lon === null) warnings.push(`"${name}": אין מיקום - הנקודה לא תיכלל`);
       return { name, paragraphs: captionToParagraphs(pick(a, "caption")), media: media && media.url, mediaKind: media && media.kind, lon, lat };
     });
@@ -223,7 +227,7 @@
     }
   }
 
-  function addTour(props, tour, basemapWebmapId, introParagraphs) {
+  function addTour(props, tour, basemapWebmapId, introParagraphs, introNodes) {
     const nodes = props.nodes, res = props.resources;
     const basemapRes = rid();
     res[basemapRes] = { type: "webmap", data: { type: "minimal", itemType: "Web Map", itemId: basemapWebmapId } };
@@ -236,10 +240,15 @@
       const titleId = nid();
       nodes[titleId] = { type: "text", data: { text: p.name, type: "h3" } };
       const paras = p.paragraphs.slice();
-      if (p.mediaKind === "video" && p.media) paras.push(`<a href="${p.media}" target="_blank">וידאו</a>`);
       const contents = paras.map((t) => { const id = nid(); nodes[id] = { type: "text", data: { text: t, type: "paragraph" } }; return id; });
       const place = { id: nid(), featureId: fid, contents, title: titleId };
-      if (p.media && p.mediaKind === "image") {
+      if (p.media && p.mediaKind === "video") {
+        // YouTube / Vimeo (or any embeddable video URL) as an embed node inside the carousel
+        const emb = nid(), car = nid();
+        nodes[emb] = { type: "embed", data: { url: p.media, embedType: "video", caption: "", alt: "", display: "inline", aspectRatio: 1.778, addedAsEmbedCode: true } };
+        nodes[car] = { type: "carousel", children: [emb] };
+        place.media = car;
+      } else if (p.media && p.mediaKind === "image") {
         const ir = rid(), img = nid(), car = nid();
         res[ir] = { type: "image", data: { src: p.media, provider: "uri" } };
         if (p.width && p.height) { res[ir].data.width = p.width; res[ir].data.height = p.height; }
@@ -253,13 +262,30 @@
     const mapId = nid(), tourId = nid();
     nodes[mapId] = { type: "tour-map", data: { geometries, alt: "", basemap: { type: "resource", value: basemapRes } } };
     nodes[tourId] = { type: "tour", data: { type: "guided-tour", subtype: "media-focused", narrativePanelPosition: "start", narrativePanelSize: "small", accentColor: "accentColor1", map: mapId, places } };
-    const added = (introParagraphs || []).map((t) => { const id = nid(); nodes[id] = { type: "text", data: { text: t, type: "paragraph" } }; return id; });
+    const added = (introNodes || []).map((n) => { const id = nid(); nodes[id] = { type: "text", data: { text: n.text, type: n.type } }; return id; });
+    (introParagraphs || []).forEach((t) => { const id = nid(); nodes[id] = { type: "text", data: { text: t, type: "paragraph" } }; added.push(id); });
     added.push(tourId);
     const children = nodes[props.root].children;
     let at = children.findIndex((c) => (nodes[c] || {}).type === "credits");
     if (at < 0) at = children.length;
     children.splice(at, 0, ...added);
     return places.length;
+  }
+
+  // Short "how to use this tour" opening shown between the cover and the tour.
+  function introParagraphs(tour, count) {
+    if (isHebrew(tour.title)) {
+      return [
+        { type: "h2", text: "איך מטיילים בסיור?" },
+        { type: "paragraph", text: `זהו סיור אינטראקטיבי בן ${count} תחנות. בכל תחנה מוצגים תמונה והסבר, והמקום מסומן על המפה.` },
+        { type: "bullet-list", text: "<li>עברו בין התחנות בעזרת החצים, או בלחיצה על הנקודות הממוספרות במפה.</li><li>אפשר להגדיל, להקטין ולהזיז את המפה בכל רגע.</li><li>גללו מטה כדי להתחיל בסיור.</li>" },
+      ];
+    }
+    return [
+      { type: "h2", text: "How to take the tour" },
+      { type: "paragraph", text: `This interactive tour has ${count} stops. Each stop has a photo and a short description, and its location is marked on the map.` },
+      { type: "bullet-list", text: "<li>Move between stops with the arrows, or click a numbered point on the map.</li><li>You can zoom and pan the map at any time.</li><li>Scroll down to start the tour.</li>" },
+    ];
   }
 
   // opts: { byline, themeItemId, coverPlace (0-based index of the place whose image is the cover, or -1 for none) }
@@ -273,7 +299,8 @@
     const image = cpl && cpl.media && cpl.mediaKind === "image" ? { url: cpl.media, width: cpl.width, height: cpl.height } : null;
     setCover(props, tour.title, tour.subtitle, image);
     props.nodes[props.root].config.coverDate = "none";
-    const count = addTour(props, t, basemapWebmapId, intro);
+    const introNodes = opts.intro === false ? [] : introParagraphs(tour, t.places.filter((p) => p.lon !== null && p.lon !== undefined).length);
+    const count = addTour(props, t, basemapWebmapId, intro, introNodes);
     return { props, count };
   }
 
@@ -332,7 +359,7 @@
     log("יוצר מפת בסיס...");
     const wmId = await createBasemapWebmap(session, tour);
     log("מפת בסיס: " + wmId);
-    const { props, count } = buildTourStory(tour, wmId, { byline: opts.byline || session.username, themeItemId: opts.themeItemId, coverPlace: opts.coverPlace });
+    const { props, count } = buildTourStory(tour, wmId, { byline: opts.byline || session.username, themeItemId: opts.themeItemId, coverPlace: opts.coverPlace, intro: opts.intro });
     log(`בונה סיפור עם ${count} נקודות...`);
     const id = await createStoryDraft(session, tour.title, ["StoryMaps migration"].concat(tour.tags), props);
     return { storyId: id, webmapId: wmId, count, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
