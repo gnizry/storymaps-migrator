@@ -51,11 +51,11 @@
     const has = (s) => kw.includes(s) || url.includes("/" + s + "/");
     if (item.type === "StoryMap") return { key: "new", label: "StoryMap חדש", target: "כבר בפורמט החדש" };
     if (has("maptour")) return { key: "maptour", label: "Map Tour", target: "Story + Guided Map Tour", auto: true };
-    if (has("mapjournal")) return { key: "mapjournal", label: "Map Journal", target: "Story + Sidecar" };
+    if (has("mapjournal")) return { key: "mapjournal", label: "Map Journal", target: "Story (מקטעים עם תמונות, מפות וסרטונים)", auto: true, direct: true };
     if (has("mapseries")) return { key: "mapseries", label: "Map Series", target: "Story / Briefing" };
-    if (has("cascade")) return { key: "cascade", label: "Cascade", target: "Story + Immersive" };
+    if (has("cascade")) return { key: "cascade", label: "Cascade", target: "Story (תמונות וטקסט ברצף)", auto: true, direct: true };
     if (has("shortlist")) return { key: "shortlist", label: "Shortlist", target: "Story + Explorer Map Tour" };
-    if (kw.includes("swipespyglass") || url.includes("storytellingswipe")) return { key: "swipe", label: "Swipe", target: "Story + Swipe" };
+    if (kw.includes("swipespyglass") || url.includes("storytellingswipe")) return { key: "swipe", label: "Swipe", target: "Story + בלוק Swipe", auto: true, direct: true };
     if (url.includes("/elevations/")) return { key: "app", label: "Elevation Profile", target: "Instant App / Experience Builder" };
     if (url.includes("/onepane/")) return { key: "app", label: "OnePane", target: "Instant App" };
     if (item.type === "Web Mapping Application") return { key: "app", label: "אפליקציה", target: "Instant App / Experience Builder" };

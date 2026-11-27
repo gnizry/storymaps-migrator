@@ -12,6 +12,7 @@
     $("signout").hidden = !session;
     $("create").disabled = !session || !currentTour;
     $("create").title = session ? "" : "יש להתחבר קודם";
+    document.querySelectorAll("button[data-direct]").forEach((b) => { b.disabled = !session; b.title = session ? "" : "יש להתחבר קודם"; });
   }
 
   function download(name, obj) {
@@ -39,7 +40,11 @@
           <td>${(it.numViews || 0).toLocaleString("he-IL")}</td>
           <td class="row"></td>`;
         const actions = tr.lastElementChild;
-        if (c.auto) {
+        if (c.direct) {
+          const b = document.createElement("button"); b.textContent = "צור טיוטה"; b.className = "primary"; b.disabled = !session;
+          b.title = session ? "" : "יש להתחבר קודם"; b.dataset.direct = "1";
+          b.onclick = () => createDirect(it, c.key, b); actions.appendChild(b);
+        } else if (c.auto) {
           const b = document.createElement("button"); b.textContent = "תצוגה מקדימה"; b.className = "primary";
           b.onclick = () => preview(it); actions.appendChild(b);
         }
@@ -56,6 +61,7 @@
 
   async function preview(item) {
     currentItem = item; currentTour = null;
+    $("create").hidden = false; $("dl").hidden = false;
     $("previewCard").hidden = false;
     $("pvTitle").textContent = item.title;
     $("pvMeta").textContent = "קורא את הסיור...";
@@ -75,6 +81,26 @@
       $("pvMeta").innerHTML = `<span class="err">${esc(e.message)}</span>`;
     }
     renderAuth();
+  }
+
+  async function createDirect(item, key, btn) {
+    if (!session) { alert("יש להתחבר קודם"); return; }
+    btn.disabled = true;
+    const card = $("previewCard"); card.hidden = false;
+    $("pvTitle").textContent = item.title; $("pvMeta").textContent = ""; $("pvWarn").textContent = ""; $("places").innerHTML = "";
+    $("create").hidden = true; $("dl").hidden = true; $("log").textContent = "";
+    const log = (m) => ($("log").textContent += m + "\n");
+    const o = { themeItemId: cfg.themeItemId, byline: cfg.byline };
+    try {
+      let r;
+      if (key === "mapjournal") r = await Migrator.migrateMapJournal(session, await Migrator.extractMapJournal(item.id), log, o);
+      else if (key === "cascade") r = await Migrator.migrateCascade(session, await Migrator.extractCascade(item.id), log, o);
+      else r = await Migrator.migrateSwipe(session, await Migrator.extractSwipe(item.id), log, o);
+      $("pvWarn").innerHTML = (r.warnings || []).map(esc).join("<br>");
+      $("log").innerHTML += `נוצרה טיוטה. <a href="${esc(r.editUrl)}" target="_blank" rel="noopener">פתח בעורך StoryMaps</a>\n`;
+    } catch (e) { log("שגיאה: " + e.message); }
+    card.scrollIntoView({ behavior: "smooth" });
+    btn.disabled = false;
   }
 
   async function create() {

@@ -6,6 +6,7 @@ can be hosted on GitHub Pages.
 
 ## What works now
 - Scan a gallery app, a group or a single item, and classify each classic template.
+- Map Journal, Cascade and Swipe: one-click draft (text, images, video, maps, swipe block).
 - Map Tour: preview the places, then create a new web map (basemap and reference
   layers only) plus a StoryMap draft with a Guided Map Tour.
 - A JSON backup of any item's data.
