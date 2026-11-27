@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>הגירת מפות סיפור</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1d2329; --muted:#5f6b76; --line:#dde1e5; --accent:#1f6f5c; --accent-ink:#fff; --warn:#9a5b00; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#15191d; --card:#1e2328; --ink:#e7eaed; --muted:#9aa5af; --line:#333b43; --accent:#5cc2a6; --accent-ink:#0d1a16; --warn:#e5a54b; --err:#f2867e; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui, "Segoe UI", Arial, sans-serif; }
+  header { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); background:var(--card); flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; }
+  main { max-width:1100px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  input[type=text] { flex:1; min-width:220px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font:inherit; direction:ltr; }
+  button { padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--ink); font:inherit; cursor:pointer; }
+  button.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:start; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:13px; }
+  .tag { display:inline-block; padding:1px 8px; border-radius:10px; border:1px solid var(--line); font-size:12px; color:var(--muted); }
+  .tag.auto { border-color:var(--accent); color:var(--accent); }
+  .muted { color:var(--muted); font-size:13px; }
+  .warn { color:var(--warn); } .err { color:var(--err); }
+  .table-wrap { overflow-x:auto; }
+  .places { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px; margin-top:12px; }
+  .place { border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .place img { width:100%; height:120px; object-fit:cover; display:block; background:var(--line); }
+  .place div { padding:8px; font-size:13px; }
+  #log { white-space:pre-wrap; font-size:13px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>הגירת מפות סיפור קלאסיות ל-ArcGIS StoryMaps</h1>
+  <div class="row"><span id="who" class="muted"></span><button id="signin" class="primary">התחברות ל-ArcGIS</button><button id="signout" hidden>התנתקות</button></div>
+</header>
+<main>
+  <section class="card">
+    <div class="row">
+      <label for="src">מזהה גלריה, קבוצה או פריט:</label>
+      <input id="src" type="text" spellcheck="false">
+      <button id="scan" class="primary">סריקה</button>
+    </div>
+    <p class="muted">הקריאה של פריטים ציבוריים לא דורשת התחברות. יצירת טיוטות דורשת התחברות, והכלי לא מוחק ולא משנה פריטים קיימים. הטיוטות לא מתפרסמות עד שתפרסם אותן בעצמך בעורך StoryMaps.</p>
+  </section>
+
+  <section class="card" id="listCard" hidden>
+    <div class="table-wrap"><table>
+      <thead><tr><th>כותרת</th><th>תבנית</th><th>יעד בדור החדש</th><th>צפיות</th><th>פעולות</th></tr></thead>
+      <tbody id="list"></tbody>
+    </table></div>
+  </section>
+
+  <section class="card" id="previewCard" hidden>
+    <h2 id="pvTitle" style="margin:0 0 4px;font-size:17px"></h2>
+    <div id="pvMeta" class="muted"></div>
+    <div id="pvWarn" class="warn"></div>
+    <div class="row" style="margin-top:10px"><button id="create" class="primary">צור טיוטת StoryMap</button><button id="dl">הורד נתונים (JSON)</button></div>
+    <div id="log"></div>
+    <div id="places" class="places"></div>
+  </section>
+</main>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+<script src="migrate.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
