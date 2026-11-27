@@ -227,7 +227,7 @@
     }
   }
 
-  function addTour(props, tour, basemapWebmapId, introParagraphs, introNodes) {
+  function addTour(props, tour, basemapWebmapId, introParagraphs, introNodes, zoomScale) {
     const nodes = props.nodes, res = props.resources;
     const basemapRes = rid();
     res[basemapRes] = { type: "webmap", data: { type: "minimal", itemType: "Web Map", itemId: basemapWebmapId } };
@@ -237,6 +237,7 @@
       const fid = uuid();
       const [x, y] = lonLatToMerc(p.lon, p.lat);
       geometries[fid] = { id: fid, type: "POINT_NUMBERED_TOUR", nodes: [{ long: p.lon, lat: p.lat, proX: x, proY: y }] };
+      if (zoomScale) geometries[fid].scale = zoomScale; // per-place map scale (1:N); without it the tour map stays very zoomed out
       const titleId = nid();
       nodes[titleId] = { type: "text", data: { text: p.name, type: "h3" } };
       const paras = p.paragraphs.slice();
@@ -300,7 +301,7 @@
     setCover(props, tour.title, tour.subtitle, image);
     props.nodes[props.root].config.coverDate = "none";
     const introNodes = opts.intro === false ? [] : introParagraphs(tour, t.places.filter((p) => p.lon !== null && p.lon !== undefined).length);
-    const count = addTour(props, t, basemapWebmapId, intro, introNodes);
+    const count = addTour(props, t, basemapWebmapId, intro, introNodes, opts.zoomScale === undefined ? 3000 : opts.zoomScale);
     return { props, count };
   }
 
@@ -368,7 +369,7 @@
     log("יוצר מפת בסיס...");
     const wmId = await createBasemapWebmap(session, tour);
     log("מפת בסיס: " + wmId);
-    const { props, count } = buildTourStory(tour, wmId, { byline: opts.byline || session.username, themeItemId: opts.themeItemId, coverPlace: opts.coverPlace, intro: opts.intro });
+    const { props, count } = buildTourStory(tour, wmId, { byline: opts.byline || session.username, themeItemId: opts.themeItemId, coverPlace: opts.coverPlace, intro: opts.intro, zoomScale: opts.zoomScale });
     log(`בונה סיפור עם ${count} נקודות...`);
     const id = await createStoryDraft(session, tour.title, ["StoryMaps migration"].concat(tour.tags), props);
     return { storyId: id, webmapId: wmId, count, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };

@@ -82,7 +82,7 @@
     $("create").disabled = true;
     const log = (m) => ($("log").textContent += m + "\n");
     try {
-      const r = await Migrator.migrateMapTour(session, currentTour, log, { themeItemId: cfg.themeItemId, byline: cfg.byline, coverPlace: parseInt($("coverSel").value, 10), intro: $("introChk").checked });
+      const r = await Migrator.migrateMapTour(session, currentTour, log, { themeItemId: cfg.themeItemId, byline: cfg.byline, coverPlace: parseInt($("coverSel").value, 10), intro: $("introChk").checked, zoomScale: parseInt($("zoomSel").value, 10) });
       $("log").innerHTML += `נוצרה טיוטה עם ${r.count} נקודות. <a href="${esc(r.editUrl)}" target="_blank" rel="noopener">פתח בעורך StoryMaps</a>\n`;
     } catch (e) {
       log("שגיאה: " + e.message);
