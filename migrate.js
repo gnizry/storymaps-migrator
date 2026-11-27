@@ -375,7 +375,203 @@
     return { storyId: id, webmapId: wmId, count, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
   }
 
-  const api = { setFetch, getJSON, itemInfo, itemData, classify, listSource, extractMapTour, buildTourStory, migrateMapTour, captionToParagraphs, GRAY_IMAGERY_BASEMAP, _internal: { mercToLonLat, lonLatToMerc, cleanMedia } };
+
+  // ------------------------------------------------------------------ Map Journal (classic) -> story
+  const escHtml = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const httpsUrl = (u) => String(u || "").trim().replace(/^\/\//, "https://").replace(/^http:\/\//i, "https://");
+  const plain = (h) => stripTags(String(h || "").replace(/<br\s*\/?>/gi, " ")).replace(/&nbsp;| /g, " ").replace(/\s+/g, " ").trim();
+
+  // Classic rich-text HTML -> flat list of blocks (paragraphs, lists, headings, images). Needs DOMParser (browser).
+  function htmlToBlocks(html) {
+    const doc = new DOMParser().parseFromString("<body>" + String(html || "") + "</body>", "text/html");
+    const blocks = [];
+    let buf = "", bufActs = [];
+    const INLINE = new Set(["SPAN", "STRONG", "B", "EM", "I", "U", "A", "FONT", "BR", "SUP", "SUB", "SMALL", "MARK", "CODE"]);
+    const BLOCKY = "img,iframe,ul,ol,figure,p,div,h1,h2,h3,h4,h5,h6,table,blockquote";
+    function inline(n, acts) {
+      if (n.nodeType === 3) return escHtml(n.nodeValue.replace(/ /g, " "));
+      if (n.nodeType !== 1) return "";
+      const tag = n.tagName;
+      if (tag === "BR") return " ";
+      if (tag === "IMG" || tag === "IFRAME") return "";
+      const inner = Array.from(n.childNodes).map((c) => inline(c, acts)).join("");
+      if (tag === "STRONG" || tag === "B") return inner.trim() ? `<strong>${inner}</strong>` : inner;
+      if (tag === "EM" || tag === "I") return inner.trim() ? `<em>${inner}</em>` : inner;
+      if (tag === "A") {
+        const act = n.getAttribute("data-storymaps");
+        if (act) { acts.push(act); return inner; }
+        const href = httpsUrl(n.getAttribute("href"));
+        return /^https?:\/\//.test(href) && inner.trim() ? `<a href="${escHtml(href)}">${inner}</a>` : inner;
+      }
+      return inner;
+    }
+    const empty = (h) => !plain(h);
+    function flush() { if (!empty(buf)) blocks.push({ type: "p", html: buf.replace(/\s+/g, " ").trim(), acts: bufActs }); buf = ""; bufActs = []; }
+    function image(img, caption) {
+      const src = httpsUrl(img.getAttribute("src"));
+      if (src) blocks.push({ type: "image", src, caption: caption || "", alt: img.getAttribute("alt") || "" });
+    }
+    function walk(el) {
+      for (const n of Array.from(el.childNodes)) {
+        if (n.nodeType === 3) { buf += escHtml(n.nodeValue.replace(/ /g, " ")); continue; }
+        if (n.nodeType !== 1) continue;
+        const tag = n.tagName;
+        if (INLINE.has(tag) && !n.querySelector(BLOCKY)) { buf += inline(n, bufActs); continue; }
+        flush();
+        if (tag === "IMG") image(n, "");
+        else if (tag === "IFRAME") { const u = httpsUrl(n.getAttribute("src")); if (u) blocks.push({ type: "embed", url: u }); }
+        else if (tag === "FIGURE") {
+          const cap = plain((n.querySelector("figcaption") || {}).innerHTML || "");
+          const imgs = Array.from(n.querySelectorAll("img"));
+          if (imgs.length) imgs.forEach((im) => image(im, cap));
+          else { const c = n.cloneNode(true); const fc = c.querySelector("figcaption"); if (fc) fc.remove(); walk(c); flush(); }
+        } else if (tag === "UL" || tag === "OL") {
+          const lis = Array.from(n.children).filter((x) => x.tagName === "LI").map((li) => { const a = []; return inline(li, a).replace(/\s+/g, " ").trim(); }).filter((h) => !empty(h));
+          if (lis.length) blocks.push({ type: tag === "UL" ? "ul" : "ol", html: lis.map((h) => `<li>${h}</li>`).join("") });
+        } else if (/^H[1-6]$/.test(tag)) {
+          const a = []; const h = inline(n, a).replace(/\s+/g, " ").trim(); if (!empty(h)) blocks.push({ type: "h", html: plain(h) });
+        } else if (tag === "FIGCAPTION" || tag === "SCRIPT" || tag === "STYLE") { /* skip */ }
+        else if (n.querySelector(BLOCKY)) { walk(n); flush(); }
+        else { const a = []; const h = inline(n, a).replace(/\s+/g, " ").trim(); if (!empty(h)) blocks.push({ type: "p", html: h, acts: a }); }
+      }
+    }
+    walk(doc.body); flush();
+    return blocks;
+  }
+
+  const isVideoUrl = (u) => /youtube\.com|youtu\.be|vimeo\.com/i.test(u);
+  function videoEmbedUrl(u) {
+    const c = cleanMedia(u);
+    return c ? c.url : httpsUrl(u);
+  }
+
+  async function extractMapJournal(appId) {
+    const info = await itemInfo(appId);
+    const data = await itemData(appId);
+    const v = data.values || {};
+    const sections = (v.story && v.story.sections) || [];
+    if (!sections.length) throw new Error("לא נמצאו מקטעים. האם זה Map Journal?");
+    const warnings = [];
+    const out = [];
+    sections.forEach((s, i) => {
+      if (s.status === "HIDDEN") { warnings.push(`מקטע ${i + 1} (${plain(s.title)}) מוסתר במקור ולא הועבר`); return; }
+      const actions = {};
+      (s.contentActions || []).forEach((a) => { if (a.type === "media" && a.media) actions[a.id] = a.media; });
+      out.push({ title: plain(s.title), html: s.content || "", media: s.media || null, actions });
+    });
+    return { appId, title: plain(v.title || info.title).replace(/\s*\|\s*/g, " | "), itemTitle: info.title, tags: info.tags || [], sections: out, warnings };
+  }
+
+  // media: classic section/action media -> a story node id (or null when unsupported)
+  function journalMediaNode(props, media, warnings, label) {
+    if (!media || !media.type) return null;
+    const nodes = props.nodes, res = props.resources;
+    const m = media[media.type] || {};
+    const video = (url) => {
+      const id = nid();
+      nodes[id] = { type: "embed", data: { url: videoEmbedUrl(url), embedType: "video", caption: "", alt: "", display: "inline", aspectRatio: 1.778, addedAsEmbedCode: true }, config: { size: "wide" } };
+      return id;
+    };
+    const link = (url) => {
+      const id = nid();
+      nodes[id] = { type: "embed", data: { url: httpsUrl(url), embedType: "link", caption: "", alt: "", display: "card" } };
+      return id;
+    };
+    if (media.type === "image" && m.url) {
+      const ir = rid(), id = nid();
+      res[ir] = { type: "image", data: { src: httpsUrl(m.url), provider: "uri" } };
+      nodes[id] = { type: "image", data: { image: ir, caption: m.caption || "", alt: m.altText || "" }, config: { size: "wide", placement: { type: "fit", fill: { x: 0.5, y: 0.5 }, fit: { color: "backgroundColor" } } } };
+      return id;
+    }
+    if (media.type === "webmap" && m.id) {
+      const r = rid(), id = nid();
+      res[r] = { type: "webmap", data: { type: "default", itemType: "Web Map", itemId: m.id } };
+      nodes[id] = { type: "webmap", data: { map: r, caption: "", alt: "" }, config: { size: "wide" } };
+      return id;
+    }
+    let url = m.url || "";
+    if (!url && m.frameTag) { const x = /src=["']([^"']+)["']/i.exec(m.frameTag); if (x) url = x[1].replace(/&amp;/g, "&"); }
+    if (media.type === "video" || media.type === "webpage") {
+      if (!url) return null;
+      return isVideoUrl(url) ? video(url) : link(url);
+    }
+    warnings.push(`${label}: סוג מדיה לא נתמך (${media.type})`);
+    return null;
+  }
+
+  function addBlockNodes(props, blocks, actions, warnings, label, out) {
+    const nodes = props.nodes, res = props.resources;
+    const used = new Set();
+    for (const b of blocks) {
+      if (b.type === "p" || b.type === "ul" || b.type === "ol" || b.type === "h") {
+        const id = nid();
+        const type = b.type === "p" ? "paragraph" : b.type === "ul" ? "bullet-list" : b.type === "ol" ? "numbered-list" : "h3";
+        nodes[id] = { type: "text", data: { text: b.html, type } };
+        out.push(id);
+        for (const a of b.acts || []) {
+          if (used.has(a) || !actions[a]) continue;
+          used.add(a);
+          const mid = journalMediaNode(props, actions[a], warnings, label);
+          if (mid) out.push(mid);
+        }
+      } else if (b.type === "image") {
+        const mid = journalMediaNode(props, { type: "image", image: { url: b.src, caption: b.caption, altText: b.alt } }, warnings, label);
+        if (mid) out.push(mid);
+      } else if (b.type === "embed") {
+        const mid = journalMediaNode(props, { type: "webpage", webpage: { url: b.url } }, warnings, label);
+        if (mid) out.push(mid);
+      }
+    }
+    return used;
+  }
+
+  // opts: { byline, themeItemId, coverImage: {url,width,height}|null }
+  function buildJournalStory(j, opts) {
+    opts = opts || {};
+    const he = isHebrew(j.title);
+    const props = newStoryTemplate(opts.byline, he ? "he" : "en-US", opts.themeItemId);
+    setCover(props, j.title, "", opts.coverImage || null);
+    props.nodes[props.root].config.coverDate = "none";
+    const children = props.nodes[props.root].children;
+    let at = children.findIndex((c) => (props.nodes[c] || {}).type === "credits");
+    if (at < 0) at = children.length;
+    const out = [];
+    const warnings = j.warnings.slice();
+    j.sections.forEach((s, i) => {
+      const label = `מקטע ${i + 1} (${s.title})`;
+      if (s.title) { const id = nid(); props.nodes[id] = { type: "text", data: { text: s.title, type: "h2" } }; out.push(id); }
+      const mid = journalMediaNode(props, s.media, warnings, label);
+      if (mid) out.push(mid);
+      const used = addBlockNodes(props, htmlToBlocks(s.html), s.actions, warnings, label, out);
+      // actions that are not linked from the text are shown at the end of the section (deduplicated)
+      const seen = new Set();
+      for (const [aid, am] of Object.entries(s.actions)) {
+        if (used.has(aid)) continue;
+        const key = JSON.stringify(am.webmap ? { t: "w", id: am.webmap.id } : am);
+        if (seen.has(key)) continue; seen.add(key);
+        const n = journalMediaNode(props, am, warnings, label);
+        if (n) out.push(n);
+      }
+    });
+    children.splice(at, 0, ...out);
+    return { props, count: j.sections.length, warnings };
+  }
+
+  async function migrateMapJournal(session, j, log, opts) {
+    opts = opts || {};
+    let coverImage = null;
+    const first = j.sections.find((s) => s.media && s.media.type === "image" && (s.media.image || {}).url);
+    if (first) {
+      coverImage = { url: httpsUrl(first.media.image.url) };
+      const sz = await imageSize(coverImage.url); if (sz) Object.assign(coverImage, sz);
+    }
+    log("בונה סיפור...");
+    const { props, count, warnings } = buildJournalStory(j, { byline: opts.byline || session.username, themeItemId: opts.themeItemId, coverImage });
+    const id = await createStoryDraft(session, j.title, ["StoryMaps migration"].concat(j.tags), props);
+    return { storyId: id, count, warnings, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
+  }
+
+  const api = { extractMapJournal, buildJournalStory, migrateMapJournal, htmlToBlocks, setFetch, getJSON, itemInfo, itemData, classify, listSource, extractMapTour, buildTourStory, migrateMapTour, captionToParagraphs, GRAY_IMAGERY_BASEMAP, _internal: { mercToLonLat, lonLatToMerc, cleanMedia } };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Migrator = api;
 })(typeof window !== "undefined" ? window : globalThis);
