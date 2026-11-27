@@ -763,7 +763,168 @@
     return { storyId: id, warnings, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
   }
 
-  const api = { extractCascade, buildCascadeStory, migrateCascade, extractSwipe, buildSwipeStory, migrateSwipe, extractMapJournal, buildJournalStory, migrateMapJournal, htmlToBlocks, setFetch, getJSON, itemInfo, itemData, classify, listSource, extractMapTour, buildTourStory, migrateMapTour, captionToParagraphs, GRAY_IMAGERY_BASEMAP, _internal: { mercToLonLat, lonLatToMerc, cleanMedia } };
+
+  // ------------------------------------------------------------------ sidecar (text panel + media stage)
+  // slides: [{ panel: [textNodeIds...], media: nodeId }]; pos: "start" | "end" (side of the narrative panel)
+  function addSidecar(props, slides, pos) {
+    const nodes = props.nodes, ids = [];
+    slides.forEach((s) => {
+      const p = nid(), sl = nid();
+      nodes[p] = { type: "immersive-narrative-panel", data: { position: pos || "start", panelStyle: "themed" }, children: s.panel };
+      nodes[sl] = { type: "immersive-slide", data: { transition: "fade" }, children: [p, s.media] };
+      ids.push(sl);
+    });
+    const imm = nid();
+    nodes[imm] = { type: "immersive", data: { type: "sidecar", subtype: "docked-panel", narrativePanelPosition: pos || "start", narrativePanelSize: "medium" }, children: ids };
+    const children = nodes[props.root].children;
+    let at = children.findIndex((c) => (nodes[c] || {}).type === "credits");
+    if (at < 0) at = children.length;
+    children.splice(at, 0, imm);
+    return imm;
+  }
+
+  const textNode = (props, text, type) => { const id = nid(); props.nodes[id] = { type: "text", data: { text, type: type || "paragraph" } }; return id; };
+
+  // Map Journal as a sidecar: every section is a slide; a paragraph that triggered a map/media action starts a new slide on that media.
+  function buildJournalSidecar(j, opts) {
+    opts = opts || {};
+    const he = isHebrew(j.title);
+    const props = newStoryTemplate(opts.byline, he ? "he" : "en-US", opts.themeItemId);
+    setCover(props, j.title, "", opts.coverImage || null);
+    props.nodes[props.root].config.coverDate = "none";
+    const warnings = j.warnings.slice();
+    const slides = [];
+    let pending = []; // text without media yet
+    const push = (panel, media) => {
+      if (!media) { if (slides.length) slides[slides.length - 1].panel.push(...panel); else pending.push(...panel); return; }
+      slides.push({ panel: pending.concat(panel), media }); pending = [];
+    };
+    j.sections.forEach((s, i) => {
+      const label = `מקטע ${i + 1} (${s.title})`;
+      const head = s.title ? [textNode(props, s.title, "h3")] : [];
+      const main = journalMediaNode(props, s.media, warnings, label, j.webmapExtents);
+      let cur = head.slice(), curMedia = main;
+      const used = new Set();
+      for (const b of htmlToBlocks(s.html)) {
+        if (b.type === "p" || b.type === "ul" || b.type === "ol" || b.type === "h") {
+          const type = b.type === "p" ? "paragraph" : b.type === "ul" ? "bullet-list" : b.type === "ol" ? "numbered-list" : "h3";
+          const act = (b.acts || []).find((a) => !used.has(a) && s.actions[a]);
+          if (act) {
+            used.add(act);
+            const am = journalMediaNode(props, s.actions[act], warnings, label, j.webmapExtents);
+            if (am) { push(cur, curMedia); cur = [textNode(props, b.html, type)]; curMedia = am; continue; }
+          }
+          cur.push(textNode(props, b.html, type));
+        } else if (b.type === "image" || b.type === "embed") {
+          const m = journalMediaNode(props, b.type === "image" ? { type: "image", image: { url: b.src, caption: b.caption, altText: b.alt } } : { type: "webpage", webpage: { url: b.url } }, warnings, label);
+          if (m) cur.push(m);
+        }
+      }
+      push(cur, curMedia);
+    });
+    if (pending.length && slides.length) { slides[0].panel.unshift(...pending); }
+    addSidecar(props, slides, opts.panelPos || (he ? "end" : "start"));
+    return { props, count: slides.length, warnings };
+  }
+
+  // ------------------------------------------------------------------ Map Series (classic, tab/bullet/accordion) -> sidecar
+  async function extractMapSeries(appId) {
+    const info = await itemInfo(appId);
+    const data = await itemData(appId);
+    const v = data.values || {};
+    const entries = (v.story && v.story.entries) || [];
+    if (!entries.length) throw new Error("לא נמצאו לשוניות. האם זה Map Series?");
+    const warnings = [];
+    const out = [];
+    for (const [i, e] of entries.entries()) {
+      if (e.status && e.status !== "PUBLISHED") { warnings.push(`לשונית ${i + 1} (${plain(e.title)}) לא פורסמה במקור`); continue; }
+      let media = e.media || null;
+      if (media && media.type === "webmap" && media.webmap && media.webmap.id) { /* extent resolved below */ }
+      out.push({ title: plain(e.title), html: e.description || "", media });
+    }
+    const extents = {};
+    await Promise.all(out.map(async (s) => {
+      const m = s.media; if (!m || m.type !== "webmap" || !m.webmap || !m.webmap.id) return;
+      try { const it = await itemInfo(m.webmap.id); if (it.extent && it.extent.length === 2) { const [x1, y1] = lonLatToMerc(it.extent[0][0], it.extent[0][1]), [x2, y2] = lonLatToMerc(it.extent[1][0], it.extent[1][1]); extents[m.webmap.id] = { xmin: x1, ymin: y1, xmax: x2, ymax: y2 }; } } catch (e) { warnings.push(`מפת רשת ${m.webmap.id} לא נקראה`); }
+    }));
+    return { appId, title: plain(v.title || info.title), itemTitle: info.title, tags: info.tags || [], entries: out, warnings, webmapExtents: extents };
+  }
+
+  function buildSeriesStory(ser, opts) {
+    opts = opts || {};
+    const he = isHebrew(ser.title);
+    const props = newStoryTemplate(opts.byline, he ? "he" : "en-US", opts.themeItemId);
+    setCover(props, ser.title, "", opts.coverImage || null);
+    props.nodes[props.root].config.coverDate = "none";
+    const warnings = ser.warnings.slice();
+    const slides = [];
+    ser.entries.forEach((s, i) => {
+      const label = `לשונית ${i + 1} (${s.title})`;
+      const panel = [];
+      if (s.title) panel.push(textNode(props, s.title, "h3"));
+      for (const b of htmlToBlocks(s.html)) {
+        if (b.type === "p" || b.type === "ul" || b.type === "ol" || b.type === "h") panel.push(textNode(props, b.html, b.type === "p" ? "paragraph" : b.type === "ul" ? "bullet-list" : b.type === "ol" ? "numbered-list" : "h3"));
+      }
+      const media = journalMediaNode(props, s.media, warnings, label, ser.webmapExtents);
+      if (!media) { if (slides.length) slides[slides.length - 1].panel.push(...panel); else warnings.push(`${label}: אין מדיה`); return; }
+      slides.push({ panel, media });
+    });
+    addSidecar(props, slides, opts.panelPos || (he ? "end" : "start"));
+    return { props, count: slides.length, warnings };
+  }
+
+  async function migrateMapSeries(session, ser, log, opts) {
+    opts = opts || {};
+    let coverImage = null;
+    const first = ser.entries.find((s) => s.media && s.media.type === "image" && (s.media.image || {}).url);
+    if (first) { coverImage = { url: httpsUrl(first.media.image.url) }; const sz = await imageSize(coverImage.url); if (sz) Object.assign(coverImage, sz); }
+    log("בונה סיפור...");
+    const { props, count, warnings } = buildSeriesStory(ser, { byline: opts.byline || session.username, themeItemId: opts.themeItemId, coverImage, panelPos: opts.panelPos });
+    const id = await createStoryDraft(session, ser.title, ["StoryMaps migration"].concat(ser.tags), props);
+    return { storyId: id, count, warnings, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
+  }
+
+  // ------------------------------------------------------------------ Compare Analysis (classic) -> sidecar with one map per slide
+  async function extractCompare(appId) {
+    const info = await itemInfo(appId);
+    const data = await itemData(appId);
+    const v = data.values || {};
+    const ids = [].concat(v.webmap || []);
+    if (!ids.length) throw new Error("לא נמצאו מפות. האם זה Compare Analysis?");
+    const maps = [], extents = {};
+    for (const id of ids) {
+      const it = await itemInfo(id);
+      maps.push({ id, title: it.title, snippet: it.snippet || "", description: plain(it.description || "") });
+      if (it.extent && it.extent.length === 2) { const [x1, y1] = lonLatToMerc(it.extent[0][0], it.extent[0][1]), [x2, y2] = lonLatToMerc(it.extent[1][0], it.extent[1][1]); extents[id] = { xmin: x1, ymin: y1, xmax: x2, ymax: y2 }; }
+    }
+    return { appId, title: plain(v.title || info.title), itemTitle: info.title, tags: info.tags || [], maps, webmapExtents: extents, warnings: [] };
+  }
+
+  function buildCompareStory(c, opts) {
+    opts = opts || {};
+    const he = isHebrew(c.title);
+    const props = newStoryTemplate(opts.byline, he ? "he" : "en-US", opts.themeItemId);
+    setCover(props, c.title, "", null);
+    props.nodes[props.root].config.coverDate = "none";
+    const slides = c.maps.map((m) => {
+      const panel = [textNode(props, m.title, "h3")];
+      if (m.snippet) panel.push(textNode(props, m.snippet));
+      const media = journalMediaNode(props, { type: "webmap", webmap: { id: m.id } }, c.warnings, m.title, c.webmapExtents);
+      return { panel, media };
+    });
+    addSidecar(props, slides, opts.panelPos || (he ? "end" : "start"));
+    return { props, count: slides.length, warnings: c.warnings };
+  }
+
+  async function migrateCompare(session, c, log, opts) {
+    opts = opts || {};
+    log("בונה סיפור...");
+    const { props, count, warnings } = buildCompareStory(c, { byline: opts.byline || session.username, themeItemId: opts.themeItemId, panelPos: opts.panelPos });
+    const id = await createStoryDraft(session, c.title, ["StoryMaps migration"].concat(c.tags), props);
+    return { storyId: id, count, warnings, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
+  }
+
+  const api = { extractMapSeries, buildSeriesStory, migrateMapSeries, extractCompare, buildCompareStory, migrateCompare, buildJournalSidecar, extractCascade, buildCascadeStory, migrateCascade, extractSwipe, buildSwipeStory, migrateSwipe, extractMapJournal, buildJournalStory, migrateMapJournal, htmlToBlocks, setFetch, getJSON, itemInfo, itemData, classify, listSource, extractMapTour, buildTourStory, migrateMapTour, captionToParagraphs, GRAY_IMAGERY_BASEMAP, _internal: { mercToLonLat, lonLatToMerc, cleanMedia } };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Migrator = api;
 })(typeof window !== "undefined" ? window : globalThis);
