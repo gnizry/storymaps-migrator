@@ -324,7 +324,7 @@
   async function createBasemapWebmap(session, tour) {
     const wm = { operationalLayers: tour.referenceLayers, baseMap: GRAY_IMAGERY_BASEMAP, spatialReference: tour.spatialReference, version: "2.31", authoringApp: "storymaps-migrator", authoringAppVersion: "1" };
     const r = await postForm(`${session.portal}/sharing/rest/content/users/${encodeURIComponent(session.username)}/addItem`, {
-      type: "Web Map", title: `${tour.itemTitle} - מפת בסיס לסיור (StoryMaps)`, tags: ["StoryMaps migration"].concat(tour.tags).join(","),
+      type: "Web Map", title: `${tour.itemTitle} - ${isHebrew(tour.itemTitle) ? "מפת בסיס לסיור" : "tour basemap"} (StoryMaps)`, tags: ["StoryMaps migration"].concat(tour.tags).join(","),
       snippet: `Basemap for the migrated tour of classic app ${tour.appId}`, text: JSON.stringify(wm),
     }, session.token);
     return r.id;
