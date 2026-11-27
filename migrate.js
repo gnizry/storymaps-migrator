@@ -598,7 +598,172 @@
     return { storyId: id, count, warnings, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
   }
 
-  const api = { extractMapJournal, buildJournalStory, migrateMapJournal, htmlToBlocks, setFetch, getJSON, itemInfo, itemData, classify, listSource, extractMapTour, buildTourStory, migrateMapTour, captionToParagraphs, GRAY_IMAGERY_BASEMAP, _internal: { mercToLonLat, lonLatToMerc, cleanMedia } };
+
+  // ------------------------------------------------------------------ Cascade (classic) -> story
+  // Immersive sections become a full-width background image/video followed by their text; the sequence between them is kept as is.
+  async function extractCascade(appId) {
+    const info = await itemInfo(appId);
+    const data = await itemData(appId);
+    const v = data.values || {};
+    const sections = v.sections || [];
+    if (!sections.length) throw new Error("לא נמצאו מקטעים. האם זה Cascade?");
+    const cover = sections.find((x) => x.type === "cover") || {};
+    const title = plain((cover.foreground || {}).title) || info.title;
+    return { appId, title, subtitle: plain((cover.foreground || {}).subtitle), itemTitle: info.title, tags: info.tags || [], sections, warnings: [] };
+  }
+
+  function bgToMedia(bg) {
+    if (!bg || !bg.type || bg.type === "color") return null;
+    const m = bg[bg.type];
+    if (!m) return null;
+    if (bg.type === "image") return { type: "image", image: { url: m.url, altText: m.altText || "", caption: m.caption || "" } };
+    if (bg.type === "video" || bg.type === "webpage") return { type: bg.type, [bg.type]: m };
+    return null;
+  }
+
+  function buildCascadeStory(c, opts) {
+    opts = opts || {};
+    const he = isHebrew(c.title);
+    const props = newStoryTemplate(opts.byline, he ? "he" : "en-US", opts.themeItemId);
+    setCover(props, c.title, c.subtitle, opts.coverImage || null);
+    props.nodes[props.root].config.coverDate = "none";
+    const children = props.nodes[props.root].children;
+    let at = children.findIndex((x) => (props.nodes[x] || {}).type === "credits");
+    if (at < 0) at = children.length;
+    const out = [], warnings = c.warnings.slice();
+    const textBlocks = (blocks, label) => {
+      for (const b of blocks || []) {
+        if (b.type === "text" && b.text) addBlockNodes(props, htmlToBlocks(b.text.value), {}, warnings, label, out);
+        else if (b.type === "image" && b.image && b.image.url) {
+          const n = journalMediaNode(props, { type: "image", image: { url: b.image.url, altText: b.image.altText || "", caption: plain(b.image.caption) } }, warnings, label);
+          if (n) out.push(n);
+        } else if (b.type === "video" || b.type === "webpage") {
+          const n = journalMediaNode(props, { type: b.type, [b.type]: b[b.type] || {} }, warnings, label);
+          if (n) out.push(n);
+        } else if (b.type !== "text") warnings.push(`${label}: בלוק מסוג ${b.type} לא הועבר`);
+      }
+    };
+    c.sections.forEach((s, i) => {
+      const label = `מקטע ${i + 1}`;
+      if (s.type === "cover") return;
+      if (s.type === "title") {
+        const t = plain((s.foreground || {}).title);
+        if (t) { const id = nid(); props.nodes[id] = { type: "text", data: { text: t, type: "h2" } }; out.push(id); }
+        const n = journalMediaNode(props, bgToMedia(s.background), warnings, label);
+        if (n) out.push(n);
+        const cr = plain((s.foreground || {}).credits);
+        if (cr) { const id = nid(); props.nodes[id] = { type: "text", data: { text: escHtml(cr), type: "paragraph" } }; out.push(id); }
+      } else if (s.type === "immersive") {
+        for (const view of s.views || []) {
+          const n = journalMediaNode(props, bgToMedia(view.background), warnings, label);
+          if (n) out.push(n);
+          for (const panel of ((view.foreground || {}).panels || [])) textBlocks(panel.blocks, label);
+        }
+      } else if (s.type === "sequence") {
+        textBlocks((s.foreground || {}).blocks, label);
+      } else warnings.push(`${label}: סוג מקטע ${s.type} לא הועבר`);
+    });
+    children.splice(at, 0, ...out);
+    return { props, count: c.sections.length, warnings };
+  }
+
+  async function migrateCascade(session, c, log, opts) {
+    opts = opts || {};
+    let coverImage = null;
+    const cover = c.sections.find((x) => x.type === "cover") || {};
+    const bg = cover.background && cover.background.image;
+    if (bg && bg.url) {
+      coverImage = { url: httpsUrl(bg.url), width: bg.width, height: bg.height };
+      if (!coverImage.width) { const sz = await imageSize(coverImage.url); if (sz) Object.assign(coverImage, sz); }
+    }
+    log("בונה סיפור...");
+    const { props, count, warnings } = buildCascadeStory(c, { byline: opts.byline || session.username, themeItemId: opts.themeItemId, coverImage });
+    const id = await createStoryDraft(session, c.title, ["StoryMaps migration"].concat(c.tags), props);
+    return { storyId: id, count, warnings, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
+  }
+
+  // ------------------------------------------------------------------ Swipe (classic) -> story with a Swipe block
+  async function extractSwipe(appId) {
+    const info = await itemInfo(appId);
+    const data = await itemData(appId);
+    const v = data.values || {};
+    const ids = v.webmaps && v.webmaps.length ? v.webmaps : (v.webmap ? [v.webmap] : []);
+    if (!ids.length) throw new Error("לא נמצאו מפות רשת. האם זה Swipe?");
+    const maps = [];
+    for (const id of ids) { const it = await itemInfo(id); maps.push({ id, title: it.title, extent: it.extent }); }
+    return {
+      appId, title: plain(v.title || info.title), subtitle: plain(v.subtitle || ""), itemTitle: info.title, tags: info.tags || [],
+      descriptionHtml: v.sidePanelDescription || v.description || "", layers: v.layers || [], dataModel: v.dataModel, layout: v.layout,
+      maps, bookmarks: v.bookmarks || [], warnings: [],
+    };
+  }
+
+  const mercExtent = (ext) => {
+    if (!ext || ext.length !== 2) return null;
+    const [x1, y1] = lonLatToMerc(ext[0][0], ext[0][1]), [x2, y2] = lonLatToMerc(ext[1][0], ext[1][1]);
+    return { xmin: x1, ymin: y1, xmax: x2, ymax: y2 };
+  };
+
+  // left/right: { id, title, extent }. extentOverride: Web Mercator extent of the first bookmark when there is one.
+  function buildSwipeStory(sw, left, right, opts) {
+    opts = opts || {};
+    const he = isHebrew(sw.title);
+    const props = newStoryTemplate(opts.byline, he ? "he" : "en-US", opts.themeItemId);
+    setCover(props, sw.title, sw.subtitle, null);
+    props.nodes[props.root].config.coverDate = "none";
+    const children = props.nodes[props.root].children;
+    let at = children.findIndex((x) => (props.nodes[x] || {}).type === "credits");
+    if (at < 0) at = children.length;
+    const out = [], warnings = sw.warnings.slice();
+    const ext = (sw.bookmarks[0] && sw.bookmarks[0].extent && sw.bookmarks[0].extent.xmin !== undefined && (!sw.bookmarks[0].extent.spatialReference || sw.bookmarks[0].extent.spatialReference.wkid === 102100)) ? sw.bookmarks[0].extent : mercExtent(left.extent);
+    const side = (m) => {
+      const r = rid(), id = nid();
+      props.resources[r] = { type: "webmap", data: mapResourceData(m.id, ext) };
+      props.nodes[id] = { type: "webmap", data: { map: r, caption: m.title || "", alt: "", themed: true, timeSlider: false } };
+      return id;
+    };
+    addBlockNodes(props, htmlToBlocks(sw.descriptionHtml), {}, warnings, "תיאור", out);
+    const swipe = nid();
+    props.nodes[swipe] = { type: "swipe", data: { contents: { 0: side(left), 1: side(right) }, viewPlacement: "extent" } };
+    out.push(swipe);
+    sw.bookmarks.forEach((b) => {
+      const name = plain(b.name);
+      if (name) { const id = nid(); props.nodes[id] = { type: "text", data: { text: name, type: "h3" } }; out.push(id); }
+      addBlockNodes(props, htmlToBlocks(b.description || ""), {}, warnings, `סימנייה ${name}`, out);
+    });
+    if (sw.layout === "spyglass") warnings.push("במקור ה-Swipe היה בעדשה (spyglass); בסיפור החדש הוא פס החלקה רגיל. אפשר להחליף לעדשה בעורך");
+    children.splice(at, 0, ...out);
+    return { props, warnings };
+  }
+
+  async function migrateSwipe(session, sw, log, opts) {
+    opts = opts || {};
+    let left, right;
+    if (sw.maps.length >= 2) {
+      // two web maps: put the earlier year (from the map title) on the left
+      const yr = (m) => { const x = /(1[5-9]\d\d|20\d\d)/.exec(m.title || ""); return x ? +x[1] : null; };
+      const [a, b] = sw.maps;
+      if (yr(a) !== null && yr(b) !== null && yr(a) > yr(b)) { left = b; right = a; } else { left = a; right = b; }
+    } else {
+      // one web map with a swiped layer: the left side is a copy without that layer
+      const base = sw.maps[0];
+      const wm = await itemData(base.id);
+      wm.operationalLayers = (wm.operationalLayers || []).filter((l) => !sw.layers.includes(l.id));
+      log("יוצר עותק של מפת הרשת ללא שכבת ה-Swipe...");
+      const r = await postForm(`${session.portal}/sharing/rest/content/users/${encodeURIComponent(session.username)}/addItem`, {
+        type: "Web Map", title: `${base.title} - ${isHebrew(sw.title) ? "ללא שכבת ההשוואה" : "without swipe layer"} (StoryMaps)`, tags: ["StoryMaps migration"].join(","),
+        snippet: `Copy of ${base.id} without the swiped layer, for the migrated swipe ${sw.appId}`, text: JSON.stringify(wm),
+      }, session.token);
+      left = { id: r.id, title: isHebrew(sw.title) ? "לפני" : "Without layer", extent: base.extent };
+      right = base;
+    }
+    log("בונה סיפור...");
+    const { props, warnings } = buildSwipeStory(sw, left, right, { byline: opts.byline || session.username, themeItemId: opts.themeItemId });
+    const id = await createStoryDraft(session, sw.title, ["StoryMaps migration"].concat(sw.tags), props);
+    return { storyId: id, warnings, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
+  }
+
+  const api = { extractCascade, buildCascadeStory, migrateCascade, extractSwipe, buildSwipeStory, migrateSwipe, extractMapJournal, buildJournalStory, migrateMapJournal, htmlToBlocks, setFetch, getJSON, itemInfo, itemData, classify, listSource, extractMapTour, buildTourStory, migrateMapTour, captionToParagraphs, GRAY_IMAGERY_BASEMAP, _internal: { mercToLonLat, lonLatToMerc, cleanMedia } };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Migrator = api;
 })(typeof window !== "undefined" ? window : globalThis);
