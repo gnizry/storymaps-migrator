@@ -459,11 +459,36 @@
       (s.contentActions || []).forEach((a) => { if (a.type === "media" && a.media) actions[a.id] = a.media; });
       out.push({ title: plain(s.title), html: s.content || "", media: s.media || null, actions });
     });
-    return { appId, title: plain(v.title || info.title).replace(/\s*\|\s*/g, " | "), itemTitle: info.title, tags: info.tags || [], sections: out, warnings };
+    // initial extents (Web Mercator) of every referenced web map, so the new map blocks open on the right area
+    const ids = new Set();
+    out.forEach((s) => { [s.media].concat(Object.values(s.actions)).forEach((m) => { if (m && m.type === "webmap" && m.webmap && m.webmap.id) ids.add(m.webmap.id); }); });
+    const extents = {};
+    await Promise.all(Array.from(ids).map(async (id) => {
+      try {
+        const it = await itemInfo(id);
+        if (it.extent && it.extent.length === 2) {
+          const [x1, y1] = lonLatToMerc(it.extent[0][0], it.extent[0][1]), [x2, y2] = lonLatToMerc(it.extent[1][0], it.extent[1][1]);
+          extents[id] = { xmin: x1, ymin: y1, xmax: x2, ymax: y2 };
+        }
+      } catch (e) { warnings.push(`מפת רשת ${id} לא נקראה: ${e.message}`); }
+    }));
+    return { appId, title: plain(v.title || info.title).replace(/\s*\|\s*/g, " | "), itemTitle: info.title, tags: info.tags || [], sections: out, warnings, webmapExtents: extents };
+  }
+
+  function mapResourceData(itemId, ext) {
+    const sr = { latestWkid: 3857, wkid: 102100 };
+    const d = { itemId, itemType: "Web Map", type: "default" };
+    if (ext) {
+      const cx = (ext.xmin + ext.xmax) / 2, cy = (ext.ymin + ext.ymax) / 2;
+      d.extent = { spatialReference: sr, xmin: ext.xmin, ymin: ext.ymin, xmax: ext.xmax, ymax: ext.ymax };
+      d.center = { spatialReference: sr, x: cx, y: cy };
+      d.viewpoint = { rotation: 0, scale: Math.round((ext.xmax - ext.xmin) / 0.2381), targetGeometry: { spatialReference: sr, x: cx, y: cy } };
+    }
+    return d;
   }
 
   // media: classic section/action media -> a story node id (or null when unsupported)
-  function journalMediaNode(props, media, warnings, label) {
+  function journalMediaNode(props, media, warnings, label, extents) {
     if (!media || !media.type) return null;
     const nodes = props.nodes, res = props.resources;
     const m = media[media.type] || {};
@@ -485,8 +510,10 @@
     }
     if (media.type === "webmap" && m.id) {
       const r = rid(), id = nid();
-      res[r] = { type: "webmap", data: { type: "default", itemType: "Web Map", itemId: m.id } };
-      nodes[id] = { type: "webmap", data: { map: r, caption: "", alt: "" }, config: { size: "wide" } };
+      let ext = (m.extent && m.extent.xmin !== undefined && (!m.extent.spatialReference || m.extent.spatialReference.wkid === 102100)) ? m.extent : null;
+      ext = ext || (extents || {})[m.id] || null;
+      res[r] = { type: "webmap", data: mapResourceData(m.id, ext) };
+      nodes[id] = { type: "webmap", data: { map: r, caption: "", alt: "", themed: true, timeSlider: false, viewPlacement: "extent" }, config: { size: "wide" } };
       return id;
     }
     let url = m.url || "";
@@ -499,7 +526,7 @@
     return null;
   }
 
-  function addBlockNodes(props, blocks, actions, warnings, label, out) {
+  function addBlockNodes(props, blocks, actions, warnings, label, out, extents) {
     const nodes = props.nodes, res = props.resources;
     const used = new Set();
     for (const b of blocks) {
@@ -511,7 +538,7 @@
         for (const a of b.acts || []) {
           if (used.has(a) || !actions[a]) continue;
           used.add(a);
-          const mid = journalMediaNode(props, actions[a], warnings, label);
+          const mid = journalMediaNode(props, actions[a], warnings, label, extents);
           if (mid) out.push(mid);
         }
       } else if (b.type === "image") {
@@ -540,16 +567,16 @@
     j.sections.forEach((s, i) => {
       const label = `מקטע ${i + 1} (${s.title})`;
       if (s.title) { const id = nid(); props.nodes[id] = { type: "text", data: { text: s.title, type: "h2" } }; out.push(id); }
-      const mid = journalMediaNode(props, s.media, warnings, label);
+      const mid = journalMediaNode(props, s.media, warnings, label, j.webmapExtents);
       if (mid) out.push(mid);
-      const used = addBlockNodes(props, htmlToBlocks(s.html), s.actions, warnings, label, out);
+      const used = addBlockNodes(props, htmlToBlocks(s.html), s.actions, warnings, label, out, j.webmapExtents);
       // actions that are not linked from the text are shown at the end of the section (deduplicated)
       const seen = new Set();
       for (const [aid, am] of Object.entries(s.actions)) {
         if (used.has(aid)) continue;
         const key = JSON.stringify(am.webmap ? { t: "w", id: am.webmap.id } : am);
         if (seen.has(key)) continue; seen.add(key);
-        const n = journalMediaNode(props, am, warnings, label);
+        const n = journalMediaNode(props, am, warnings, label, j.webmapExtents);
         if (n) out.push(n);
       }
     });
