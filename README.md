@@ -13,9 +13,5 @@ can be hosted on GitHub Pages.
 Nothing existing is changed or deleted, and drafts are never published automatically.
 
 ## Setup
-1. In ArcGIS Online: Content > New item > Developer credentials > OAuth 2.0 credentials.
-   Add the GitHub Pages URL (e.g. `https://<user>.github.io/<repo>/`) as a redirect URL.
-2. Put the Client ID into `config.js`.
-3. Settings > Pages > Deploy from branch `main`, folder `/ (root)`.
 
-Sign-in uses OAuth 2.0 with PKCE. The token stays in the tab's sessionStorage only.
+Sign-in is with an ArcGIS username and password (built-in accounts; SSO or MFA accounts need OAuth with a Client ID). The password goes only to ArcGIS and is never stored; the token stays in sessionStorage.

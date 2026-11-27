@@ -32,6 +32,10 @@
   .place div { padding:8px; font-size:13px; }
   #log { white-space:pre-wrap; font-size:13px; }
   a { color:var(--accent); }
+  dialog { border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); padding:18px; width:min(92vw, 360px); }
+  dialog::backdrop { background:rgba(0,0,0,.4); }
+  dialog label { display:block; margin:10px 0 4px; font-size:13px; color:var(--muted); }
+  dialog input { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font:inherit; direction:ltr; }
 </style>
 </head>
 <body>
@@ -65,6 +69,16 @@
     <div id="places" class="places"></div>
   </section>
 </main>
+<dialog id="loginDlg">
+  <form method="dialog" id="loginForm" autocomplete="on">
+    <h2 style="margin:0 0 4px;font-size:17px">התחברות ל-ArcGIS Online</h2>
+    <p class="muted" style="margin:0">הסיסמה נשלחת רק ל-ArcGIS, לא נשמרת, ולא עוברת בשום שרת אחר.</p>
+    <label for="lu">שם משתמש</label><input id="lu" name="username" type="text" autocomplete="username" required>
+    <label for="lp">סיסמה</label><input id="lp" name="password" type="password" autocomplete="current-password" required>
+    <div id="lerr" class="err" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:12px"><button id="lgo" class="primary" type="submit">התחבר</button><button id="lcancel" type="button">ביטול</button></div>
+  </form>
+</dialog>
 <script src="config.js"></script>
 <script src="auth.js"></script>
 <script src="migrate.js"></script>

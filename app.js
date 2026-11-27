@@ -92,7 +92,19 @@
   $("src").addEventListener("keydown", (e) => { if (e.key === "Enter") scan(); });
   $("create").onclick = create;
   $("dl").onclick = () => currentTour && download(`${currentTour.appId}_places.json`, currentTour);
-  $("signin").onclick = () => Auth.signIn().catch((e) => alert(e.message));
+  $("signin").onclick = () => { $("lerr").textContent = ""; $("loginDlg").showModal(); $("lu").focus(); };
+  $("lcancel").onclick = () => $("loginDlg").close();
+  $("loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("lgo").disabled = true; $("lerr").textContent = "";
+    try {
+      session = await Auth.signInWithPassword($("lu").value.trim(), $("lp").value);
+      $("lp").value = "";
+      $("loginDlg").close();
+      renderAuth();
+    } catch (err) { $("lerr").textContent = err.message; }
+    $("lgo").disabled = false;
+  });
   $("signout").onclick = () => { Auth.signOut(); session = null; renderAuth(); };
 
   (async function init() {

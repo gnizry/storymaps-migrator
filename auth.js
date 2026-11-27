@@ -40,11 +40,32 @@
     return s;
   }
 
+  // Username + password sign-in (built-in ArcGIS accounts). The password is sent only to
+  // the ArcGIS Online token endpoint over HTTPS, is never stored, and only the token is
+  // kept in sessionStorage. Accounts that use SSO or multi-factor sign-in cannot use this.
+  async function signInWithPassword(username, password) {
+    const c = cfg();
+    const body = new URLSearchParams({ username, password, client: "requestip", expiration: "120", f: "json" });
+    const r = await fetch(`${c.portal}/sharing/rest/generateToken`, { method: "POST", body });
+    const j = await r.json();
+    if (j.error) {
+      const m = j.error.message || "";
+      const details = (j.error.details || []).join(" ");
+      throw new Error(`ההתחברות נכשלה: ${details || m}`);
+    }
+    if (!j.token) throw new Error("ההתחברות נכשלה (לא התקבל טוקן)");
+    const self = await fetch(`${c.portal}/sharing/rest/community/self?f=json&token=${encodeURIComponent(j.token)}`).then((x) => x.json());
+    if (self.error || !self.username) throw new Error("ההתחברות הצליחה אך לא ניתן לקרוא את פרטי המשתמש");
+    const s = { portal: c.portal, token: j.token, username: self.username, fullName: self.fullName, expires: j.expires || Date.now() + 120 * 60000 };
+    store(KEY, JSON.stringify(s));
+    return s;
+  }
+
   function current() {
     const s = JSON.parse(load(KEY) || "null");
     return s && s.expires > Date.now() + 60000 ? s : null;
   }
   function signOut() { store(KEY, null); }
 
-  window.Auth = { signIn, handleRedirect, current, signOut };
+  window.Auth = { signIn, signInWithPassword, handleRedirect, current, signOut };
 })();
