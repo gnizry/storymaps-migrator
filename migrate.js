@@ -293,7 +293,7 @@
     opts = typeof opts === "string" ? { byline: opts } : (opts || {});
     let t = tour, intro = null;
     if (tour.firstRecordAsIntro && tour.places.length) { intro = tour.places[0].paragraphs; t = Object.assign({}, tour, { places: tour.places.slice(1) }); }
-    const props = newStoryTemplate(opts.byline, isHebrew(tour.title) ? "he-IL" : "en-US", opts.themeItemId);
+    const props = newStoryTemplate(opts.byline, isHebrew(tour.title) ? "he" : "en-US", opts.themeItemId);
     const cp = opts.coverPlace === undefined ? 0 : opts.coverPlace;
     const cpl = cp >= 0 ? tour.places[cp] : null;
     const image = cpl && cpl.media && cpl.mediaKind === "image" ? { url: cpl.media, width: cpl.width, height: cpl.height } : null;
@@ -311,8 +311,17 @@
   }
 
   // session: { portal: "https://org.maps.arcgis.com", token, username }
+  // Imagery underneath, light gray canvas on top that fades out when zoomed in: gray when far, aerial photo when close.
+  const GRAY_IMAGERY_BASEMAP = {
+    title: "Light gray + imagery",
+    baseMapLayers: [
+      { id: "worldImagery", title: "World Imagery", layerType: "ArcGISTiledMapServiceLayer", url: "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer", visibility: true, opacity: 1 },
+      { id: "lightGray", title: "Light Gray Canvas", layerType: "ArcGISTiledMapServiceLayer", url: "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer", visibility: true, opacity: 1, minScale: 0, maxScale: 150000 },
+      { id: "lightGrayRef", title: "Light Gray Reference", layerType: "ArcGISTiledMapServiceLayer", url: "https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer", visibility: true, opacity: 1, isReference: true, minScale: 0, maxScale: 150000 },
+    ],
+  };
   async function createBasemapWebmap(session, tour) {
-    const wm = { operationalLayers: tour.referenceLayers, baseMap: tour.basemap, spatialReference: tour.spatialReference, version: "2.31", authoringApp: "storymaps-migrator", authoringAppVersion: "1" };
+    const wm = { operationalLayers: tour.referenceLayers, baseMap: GRAY_IMAGERY_BASEMAP, spatialReference: tour.spatialReference, version: "2.31", authoringApp: "storymaps-migrator", authoringAppVersion: "1" };
     const r = await postForm(`${session.portal}/sharing/rest/content/users/${encodeURIComponent(session.username)}/addItem`, {
       type: "Web Map", title: `${tour.itemTitle} - מפת בסיס לסיור (StoryMaps)`, tags: ["StoryMaps migration"].concat(tour.tags).join(","),
       snippet: `Basemap for the migrated tour of classic app ${tour.appId}`, text: JSON.stringify(wm),
@@ -365,7 +374,7 @@
     return { storyId: id, webmapId: wmId, count, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };
   }
 
-  const api = { setFetch, getJSON, itemInfo, itemData, classify, listSource, extractMapTour, buildTourStory, migrateMapTour, captionToParagraphs, _internal: { mercToLonLat, lonLatToMerc, cleanMedia } };
+  const api = { setFetch, getJSON, itemInfo, itemData, classify, listSource, extractMapTour, buildTourStory, migrateMapTour, captionToParagraphs, GRAY_IMAGERY_BASEMAP, _internal: { mercToLonLat, lonLatToMerc, cleanMedia } };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Migrator = api;
 })(typeof window !== "undefined" ? window : globalThis);
