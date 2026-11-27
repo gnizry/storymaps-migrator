@@ -192,7 +192,7 @@
   }
 
   // ------------------------------------------------------------------ story JSON
-  function newStoryTemplate(byline, locale) {
+  function newStoryTemplate(byline, locale, themeItemId) {
     const rootId = nid(), cover = nid(), nav = nid(), credits = nid(), theme = rid();
     return {
       root: rootId,
@@ -202,12 +202,25 @@
         [nav]: { type: "navigation", data: { links: [] }, config: { isHidden: true } },
         [credits]: { type: "credits" },
       },
-      resources: { [theme]: { type: "story-theme", data: { themeId: "summit", themeBaseVariableOverrides: {} } } },
+      resources: { [theme]: { type: "story-theme", data: Object.assign({ themeId: "summit", themeBaseVariableOverrides: {} }, themeItemId ? { themeItemId } : {}) } },
     };
   }
 
-  function setCover(props, title, summary) {
-    for (const n of Object.values(props.nodes)) if (n.type === "storycover") { n.data.title = title; n.data.summary = summary; }
+  // Cover: a full-bleed image (when given) with the title panel centered over a gradient.
+  // image: { url, width, height } or null for a plain minimal cover.
+  function setCover(props, title, summary, image) {
+    for (const [id, n] of Object.entries(props.nodes)) {
+      if (n.type !== "storycover") continue;
+      n.data.title = title; n.data.summary = summary;
+      if (image && image.url) {
+        const ir = rid(), img = nid();
+        props.resources[ir] = { type: "image", data: Object.assign({ src: image.url, provider: "uri" }, image.width ? { width: image.width, height: image.height } : {}) };
+        props.nodes[img] = { type: "image", data: { image: ir } };
+        Object.assign(n.data, { type: "full", titlePanelVerticalPosition: "middle", titlePanelHorizontalPosition: "center", titlePanelStyle: "gradient" });
+        delete n.data.titlePanelPosition;
+        n.children = [img];
+      }
+    }
   }
 
   function addTour(props, tour, basemapWebmapId, introParagraphs) {
@@ -249,11 +262,17 @@
     return places.length;
   }
 
-  function buildTourStory(tour, basemapWebmapId, byline) {
+  // opts: { byline, themeItemId, coverPlace (0-based index of the place whose image is the cover, or -1 for none) }
+  function buildTourStory(tour, basemapWebmapId, opts) {
+    opts = typeof opts === "string" ? { byline: opts } : (opts || {});
     let t = tour, intro = null;
     if (tour.firstRecordAsIntro && tour.places.length) { intro = tour.places[0].paragraphs; t = Object.assign({}, tour, { places: tour.places.slice(1) }); }
-    const props = newStoryTemplate(byline, isHebrew(tour.title) ? "he-IL" : "en-US");
-    setCover(props, tour.title, tour.subtitle);
+    const props = newStoryTemplate(opts.byline, isHebrew(tour.title) ? "he-IL" : "en-US", opts.themeItemId);
+    const cp = opts.coverPlace === undefined ? 0 : opts.coverPlace;
+    const cpl = cp >= 0 ? tour.places[cp] : null;
+    const image = cpl && cpl.media && cpl.mediaKind === "image" ? { url: cpl.media, width: cpl.width, height: cpl.height } : null;
+    setCover(props, tour.title, tour.subtitle, image);
+    props.nodes[props.root].config.coverDate = "none";
     const count = addTour(props, t, basemapWebmapId, intro);
     return { props, count };
   }
@@ -304,7 +323,8 @@
     });
   }
 
-  async function migrateMapTour(session, tour, log) {
+  async function migrateMapTour(session, tour, log, opts) {
+    opts = opts || {};
     log("בודק גדלי תמונות...");
     await Promise.all(tour.places.map(async (p) => {
       if (p.media && p.mediaKind === "image") { const sz = await imageSize(p.media); if (sz) Object.assign(p, sz); }
@@ -312,7 +332,7 @@
     log("יוצר מפת בסיס...");
     const wmId = await createBasemapWebmap(session, tour);
     log("מפת בסיס: " + wmId);
-    const { props, count } = buildTourStory(tour, wmId, session.username);
+    const { props, count } = buildTourStory(tour, wmId, { byline: opts.byline || session.username, themeItemId: opts.themeItemId, coverPlace: opts.coverPlace });
     log(`בונה סיפור עם ${count} נקודות...`);
     const id = await createStoryDraft(session, tour.title, ["StoryMaps migration"].concat(tour.tags), props);
     return { storyId: id, webmapId: wmId, count, editUrl: `https://storymaps.arcgis.com/stories/${id}/edit` };

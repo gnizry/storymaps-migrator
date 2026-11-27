@@ -65,6 +65,8 @@
       const t = await Migrator.extractMapTour(item.id);
       currentTour = t;
       $("pvMeta").textContent = `${t.places.length} נקודות · כותרת: ${t.title}${t.subtitle ? " · " + t.subtitle : ""}`;
+      $("coverSel").innerHTML = `<option value="-1">ללא תמונה (שער פשוט)</option>` + t.places.map((p, i) => (p.media && p.mediaKind === "image") ? `<option value="${i}">${i + 1}. ${esc(p.name)}</option>` : "").join("");
+      $("coverSel").value = t.places.findIndex((p) => p.media && p.mediaKind === "image");
       $("pvWarn").innerHTML = t.warnings.map(esc).join("<br>");
       $("places").innerHTML = t.places.map((p, i) => `<div class="place">${p.media && p.mediaKind === "image" ? `<img loading="lazy" src="${esc(p.media)}" alt="">` : ""}
         <div><strong>${i + 1}. ${esc(p.name)}</strong><br>${esc((p.paragraphs.join(" ").replace(/<[^>]+>/g, "")).slice(0, 140))}</div></div>`).join("");
@@ -80,7 +82,7 @@
     $("create").disabled = true;
     const log = (m) => ($("log").textContent += m + "\n");
     try {
-      const r = await Migrator.migrateMapTour(session, currentTour, log);
+      const r = await Migrator.migrateMapTour(session, currentTour, log, { themeItemId: cfg.themeItemId, byline: cfg.byline, coverPlace: parseInt($("coverSel").value, 10) });
       $("log").innerHTML += `נוצרה טיוטה עם ${r.count} נקודות. <a href="${esc(r.editUrl)}" target="_blank" rel="noopener">פתח בעורך StoryMaps</a>\n`;
     } catch (e) {
       log("שגיאה: " + e.message);

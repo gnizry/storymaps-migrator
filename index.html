@@ -32,6 +32,7 @@
   .place div { padding:8px; font-size:13px; }
   #log { white-space:pre-wrap; font-size:13px; }
   a { color:var(--accent); }
+  select { padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--ink); font:inherit; max-width:100%; }
   dialog { border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); padding:18px; width:min(92vw, 360px); }
   dialog::backdrop { background:rgba(0,0,0,.4); }
   dialog label { display:block; margin:10px 0 4px; font-size:13px; color:var(--muted); }
@@ -64,6 +65,7 @@
     <h2 id="pvTitle" style="margin:0 0 4px;font-size:17px"></h2>
     <div id="pvMeta" class="muted"></div>
     <div id="pvWarn" class="warn"></div>
+    <div class="row" style="margin-top:10px"><label for="coverSel" class="muted">תמונת שער:</label><select id="coverSel"></select></div>
     <div class="row" style="margin-top:10px"><button id="create" class="primary">צור טיוטת StoryMap</button><button id="dl">הורד נתונים (JSON)</button></div>
     <div id="log"></div>
     <div id="places" class="places"></div>
