@@ -261,7 +261,7 @@
     }
     const mapId = nid(), tourId = nid();
     nodes[mapId] = { type: "tour-map", data: { geometries, alt: "", basemap: { type: "resource", value: basemapRes } } };
-    nodes[tourId] = { type: "tour", data: { type: "guided-tour", subtype: "media-focused", narrativePanelPosition: "start", narrativePanelSize: "small", accentColor: "accentColor1", map: mapId, places } };
+    nodes[tourId] = { type: "tour", data: { type: "guided-tour", subtype: "media-focused", narrativePanelPosition: isHebrew(tour.title) ? "end" : "start", narrativePanelSize: "small", accentColor: "accentColor1", map: mapId, places } };
     const added = (introNodes || []).map((n) => { const id = nid(); nodes[id] = { type: "text", data: { text: n.text, type: n.type } }; return id; });
     (introParagraphs || []).forEach((t) => { const id = nid(); nodes[id] = { type: "text", data: { text: t, type: "paragraph" } }; added.push(id); });
     added.push(tourId);
